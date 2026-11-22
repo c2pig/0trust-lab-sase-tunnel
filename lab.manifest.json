@@ -1,0 +1,41 @@
+{
+  "id": "sase-tunnel",
+  "title": "Zero-Trust SASE & Browser-to-Origin Tunnel",
+  "domainLabel": "Zero-Trust SASE",
+  "description": "Enforce Cloudflare Access device posture, outbound-only cloudflared tunnels with zero public ingress, and Gateway DNS Shadow-AI egress filtering.",
+  "repo": "c2pig/0trust-lab-sase-tunnel",
+  "routePath": "/sase-tunnel",
+  "standaloneUrl": "https://lab.0trust.dev/sase-tunnel",
+  "localDevPort": 5180,
+  "archetype": "C",
+  "seats": [
+    {
+      "id": "remote-employee",
+      "persona": "Samira Al-Mansoor",
+      "roleLabel": "Remote Staff · Endpoint Client",
+      "appLabel": "Browser & WARP Posture Simulator"
+    },
+    {
+      "id": "net-admin",
+      "persona": "Carlos Mendez",
+      "roleLabel": "Network Sec · Cloudflare One Admin",
+      "appLabel": "Access, Tunnel & Gateway DNS Console"
+    }
+  ],
+  "apiEndpoints": [
+    "/api/sase-tunnel/evaluate-access",
+    "/api/sase-tunnel/dns-resolve"
+  ],
+  "kvPrefixes": [
+    "lab5:sase:"
+  ],
+  "infraDependencies": [
+    "managed-infrastructure/modules/cloudflare-pages-lab",
+    "Cloudflare Access & Gateway DNS",
+    "cloudflared Outbound-Only Tunnel"
+  ],
+  "diagrams": {
+    "localArchitectureMd": "docs/ARCHITECTURE.md",
+    "zoominSvg": "docs/diagrams/sase_tunnel_architecture.svg"
+  }
+}
