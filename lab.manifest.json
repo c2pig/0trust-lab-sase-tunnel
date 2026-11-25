@@ -5,6 +5,7 @@
   "description": "Enforce Cloudflare Access device posture, outbound-only cloudflared tunnels with zero public ingress, and Gateway DNS Shadow-AI egress filtering.",
   "repo": "c2pig/0trust-lab-sase-tunnel",
   "routePath": "/sase-tunnel",
+  "apiPrefix": "/api/sase-tunnel",
   "standaloneUrl": "https://lab.0trust.dev/sase-tunnel",
   "localDevPort": 5180,
   "archetype": "C",
