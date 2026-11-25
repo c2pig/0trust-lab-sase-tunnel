@@ -14,7 +14,8 @@ Lab 5 models a Cloudflare One Zero-Trust SASE deployment that eliminates legacy 
 1. **Endpoint & Browser (`remote-employee` — Samira Al-Mansoor)**:
    - Simulates 3 device posture profiles (`managed-corp`, `unmanaged-byod`, `stale-os`) with Cloudflare WARP, disk encryption, and OS version signals.
    - Static SPA (`dist/`) is served from Cloudflare Pages via `0trust-lab-router` at `https://lab.0trust.dev/sase-tunnel`.
-2. **Same-Origin Routing & Cloud Run API (`server/app.ts`, `Dockerfile`)**:
+2. **Same-Origin Routing & Cloud Run API (`server/app.ts` → synced `server/runtime.ts`, canonical `Dockerfile`)**:
+   - `server/app.ts` is a thin lab-specific route wrapper calling `createBaseLabApp` from the canonical synced `server/runtime.ts` (synced from `0trust.dev/templates/lab-runtime/` alongside `server/kvAdapter.ts`, `server/origin.ts`, `server/index.ts`, and the canonical multi-stage `Dockerfile`).
    - `0trust-lab-router` forwards `/api/sase-tunnel/*` and `/sase-tunnel/api/*` to the GCP Cloud Run origin with `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Lab-Router-Secret`.
    - Cloud Run enforces fail-closed constant-time `X-Lab-Router-Secret` validation on all `/api/*` routes (`403 FORBIDDEN_DIRECT_ORIGIN` on direct `*.run.app` calls), while exposing `GET /healthz` (`200 { ok: true, lab: "sase-tunnel" }`) for Cloud Run probes.
    - `GET /api/sase-tunnel/health`: Returns service health for frontend capability detection.
@@ -22,7 +23,7 @@ Lab 5 models a Cloudflare One Zero-Trust SASE deployment that eliminates legacy 
    - `POST /api/sase-tunnel/dns-resolve`: Evaluates outbound DNS queries against an allowlisted preset catalog (`CORPORATE_INTERNAL`, `APPROVED_SAAS`, `SHADOW_AI_GENAI`, `COMMAND_AND_CONTROL`, `MALWARE`) and sinkholes blocked categories to `NXDOMAIN` (`0.0.0.0`, HTTP `403`).
 3. **`cloudflared` Outbound-Only Tunnel & Private Origin**:
    - Connector `tun-cf-sase-sin-01` dials outbound QUIC to Cloudflare Edge (`SIN`), exposing `0` public inbound ports on private origin `10.24.0.14`.
-4. **State & Observability (`server/kvAdapter.ts`, `functions/api/_middleware.ts`)**:
+4. **State, Observability & Terraform Backend (`server/kvAdapter.ts`, `functions/api/_middleware.ts`, `_telemetry.ts`, `infra/terraform/backend.tf`)**:
    - `FirestoreKvAdapter` stores session state in Firestore Native (`kv_state`) with document IDs scoped to `sase-tunnel:<encodeURIComponent(key)>` and synchronous `expireAt.toMillis() <= Date.now()` expiry checks; local `npm run dev` uses `MemoryKvAdapter` with zero GCP credentials required.
    - Propagates W3C `traceparent`, sanitizes `X-Session-Id`, redacts JWT signatures (never logging `X-Lab-Router-Secret` or `OTLP_AUTH_HEADER`), sets `X-Edge-Latency-Ms`, injects `_telemetry` into JSON responses for the `XRayTelemetryDrawer` (including a `Global Live Dashboard ↗` link to `https://0trust.dev/observability`), and exports non-blocking OTLP `/v1/traces` + `/v1/logs` with `OTEL_SERVICE_NAME=zerotrust-lab-sase-tunnel` authenticated via GCP Secret Manager `grafana-otlp-auth-header` (`OTLP_AUTH_HEADER`).
-   - Provisioned via `infra/terraform/` (`managed-infrastructure//modules/cloudflare-pages-lab` + `managed-infrastructure//modules/cloud-run-lab`) and deployed via split GitHub Actions jobs (`deploy-pages` + WIF OIDC `deploy-cloudrun`).
+   - Provisioned via `infra/terraform/` (`managed-infrastructure//modules/cloudflare-pages-lab` + `managed-infrastructure//modules/cloud-run-lab`) and deployed via split GitHub Actions jobs (`deploy-pages` + WIF OIDC `deploy-cloudrun`). Remote GCS state is declared in `infra/terraform/backend.tf` (`bucket = "0trust-dev-tfstate"`, `prefix = "labs/sase-tunnel"`), with `.terraform/` and `*.tfstate*` gitignored. Operators migrating from local state should provision the GCS bucket once (Uniform Bucket-Level Access, versioning enabled, `public_access_prevention = "enforced"`) and run `terraform init -migrate-state`.
