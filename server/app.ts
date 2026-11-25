@@ -1,6 +1,9 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
-import { onRequest as observabilityMiddleware } from '../functions/api/_middleware';
+import {
+  onRequest as observabilityMiddleware,
+  type EdgeMiddlewareEnv
+} from '../functions/api/_middleware';
 import {
   onRequestPost as dnsResolvePost,
   type KVNamespace
@@ -9,13 +12,10 @@ import { onRequestPost as evaluateAccessPost } from '../functions/api/sase-tunne
 import { onRequestGet as healthGet } from '../functions/api/sase-tunnel/health';
 import { createKvAdapter } from './kvAdapter';
 
-export interface CloudRunEnv {
-  ENVIRONMENT?: string;
+export interface CloudRunEnv extends EdgeMiddlewareEnv {
   LAB_SLUG?: string;
   LAB_ROUTER_SECRET?: string;
   FIRESTORE_COLLECTION?: string;
-  OTLP_ENDPOINT?: string;
-  OTLP_AUTH_HEADER?: string;
   STATE_KV?: KVNamespace;
 }
 
@@ -46,6 +46,7 @@ export function createCloudRunApp(options?: {
   const app = new Hono();
   const baseEnv: CloudRunEnv = options?.env ?? {
     ENVIRONMENT: process.env.ENVIRONMENT || (process.env.K_SERVICE ? 'production' : 'development'),
+    OTEL_SERVICE_NAME: process.env.OTEL_SERVICE_NAME,
     LAB_SLUG: process.env.LAB_SLUG || 'sase-tunnel',
     LAB_ROUTER_SECRET: process.env.LAB_ROUTER_SECRET,
     FIRESTORE_COLLECTION: process.env.FIRESTORE_COLLECTION || 'kv_state',
