@@ -1,30 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, Compass, Download, Globe, Laptop, RotateCcw, ShieldCheck } from 'lucide-react';
+import { driver } from 'driver.js';
+import 'driver.js/dist/driver.css';
 import {
-  Activity,
-  AlertTriangle,
-  ArrowLeft,
-  ArrowRight,
-  CheckCircle2,
-  Copy,
-  Globe,
-  Laptop,
-  Lock,
-  Network,
-  RotateCcw,
-  Server,
-  Shield,
-  ShieldAlert,
-  ShieldCheck,
-  Terminal
-} from 'lucide-react';
-import {
+  AccessEvaluationResult,
   DEVICE_PROFILES,
   DeviceProfileId,
   DNS_PRESETS,
   DnsDomainPreset,
-  PoePredictionId,
+  DnsResolveResult,
   SaseSeatId,
-  SaseStage,
   SaseTunnelState,
   TARGET_APPS,
   TargetAppId
@@ -45,38 +30,22 @@ export interface SaseTunnelPageProps {
   onBack: () => void;
 }
 
-const STAGE_LABELS: Array<{ id: SaseStage; label: string; short: string }> = [
-  { id: 'discovery', label: '1. Discovery · Topology', short: '1. Discovery' },
-  { id: 'poe', label: '2. POE · Predict & Observe', short: '2. POE Gate' },
-  { id: 'practice', label: '3. Practice · Patch & Verify', short: '3. Practice' },
-  { id: 'reflection', label: '4. Reflection · Posture Diff', short: '4. Reflection' }
-];
-
-const POE_OPTIONS: Array<{ id: PoePredictionId; label: string; detail: string }> = [
-  {
-    id: 'both-succeed',
-    label: 'Both succeed because Zero-Trust VPN is not active',
-    detail: 'Assumes neither Cloudflare Access nor Gateway DNS inspects traffic.'
-  },
-  {
-    id: 'access-blocks-dns-leaks',
-    label: 'Access blocks unmanaged device (403), but Shadow-AI DNS resolves until Gateway is patched',
-    detail: 'Access enforces WARP/Disk posture, while Gateway DNS defaults to permissive until categories are blocked.'
-  },
-  {
-    id: 'origin-drops-both',
-    label: 'Private origin firewall drops both requests directly',
-    detail: 'Assumes the private origin has a public IP receiving the packets.'
-  }
-];
+const APP_IDS: TargetAppId[] = ['internal-erp', 'finance-portal', 'admin-ssh-bastion'];
+const DEVICE_IDS: DeviceProfileId[] = ['managed-corp', 'unmanaged-byod', 'stale-os'];
 
 export function SaseTunnelPage({ onBack }: SaseTunnelPageProps): React.ReactElement {
   const [sessionId, setSessionId] = useState<string>(() => createSaseSessionId());
+  const sessionIdRef = useRef<string>(sessionId);
+  sessionIdRef.current = sessionId;
+
   const [activeSeat, setActiveSeat] = useState<SaseSeatId>('remote-employee');
   const [state, setState] = useState<SaseTunnelState>(() => createInitialSaseState());
-  const [busy, setBusy] = useState<boolean>(false);
-  const [copiedReport, setCopiedReport] = useState<boolean>(false);
+  const [appResults, setAppResults] = useState<Partial<Record<TargetAppId, AccessEvaluationResult>>>({});
+  const [dnsResults, setDnsResults] = useState<Partial<Record<DnsDomainPreset, DnsResolveResult>>>({});
+  const [busyKey, setBusyKey] = useState<string | null>(null);
   const [spans, setSpans] = useState<ObservabilitySpan[]>([]);
+
+  const tourLaunchedRef = useRef<boolean>(false);
 
   const recordSpan = useCallback((span: ObservabilitySpan) => {
     setSpans((prev) => [span, ...prev].slice(0, 40));
@@ -92,8 +61,6 @@ export function SaseTunnelPage({ onBack }: SaseTunnelPageProps): React.ReactElem
         latencyMs: 3,
         origin: 'browser-webcrypto-fallback',
         summary: {
-          mode: 'guided-sandbox',
-          cost: '$0.00/mo',
           tunnel_connector: 'tun-cf-sase-sin-01',
           public_ports_exposed: 0
         }
@@ -101,39 +68,144 @@ export function SaseTunnelPage({ onBack }: SaseTunnelPageProps): React.ReactElem
     );
   }, [sessionId, recordSpan]);
 
+  const startLabTour = useCallback(() => {
+    const driverObj = driver({
+      showProgress: true,
+      animate: true,
+      allowClose: true,
+      overlayOpacity: 0.5,
+      steps: [
+        {
+          popover: {
+            title: 'Lab Orientation: Zero-Trust SASE & Browser-to-Origin Tunnel',
+            description:
+              'Explore how identity and device posture gate internal application access over an outbound-only cloudflared tunnel while Gateway DNS filters risky egress.'
+          }
+        },
+        {
+          element: '#tour-role-switcher',
+          popover: {
+            title: 'Role Switcher',
+            description:
+              'Switch between Samira Al-Mansoor (Remote Staff) and Carlos Mendez (Network Security). Notification dots highlight pending policy hardening or verification steps.'
+          }
+        },
+        {
+          element: '#tour-workspace',
+          popover: {
+            title: 'Role Workspace',
+            description:
+              'Start as Samira Al-Mansoor to launch internal apps under different endpoint posture profiles and test web destinations, then switch to Carlos Mendez to enforce Zero-Trust Access and DNS rules.'
+          }
+        },
+        {
+          element: '.xray-drawer',
+          popover: {
+            title: 'X-Ray Telemetry Drawer',
+            description:
+              'Expand this bottom drawer anytime to inspect live HTTP spans, Cloudflare Access JWT assertions, tunnel connector metadata, and Gateway DNS traces.'
+          }
+        },
+        {
+          element: '#tour-lab-controls',
+          popover: {
+            title: 'Lab Controls',
+            description:
+              'Use Lab Tour to replay this orientation, or Reset to restore default endpoint posture and baseline SASE policies.'
+          }
+        }
+      ]
+    });
+    driverObj.drive();
+  }, []);
+
+  useEffect(() => {
+    if (tourLaunchedRef.current) return;
+    tourLaunchedRef.current = true;
+    const timer = window.setTimeout(() => {
+      startLabTour();
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [startLabTour]);
+
   const handleReset = () => {
     const freshSession = createSaseSessionId();
+    sessionIdRef.current = freshSession;
     setSessionId(freshSession);
     setActiveSeat('remote-employee');
     setState(createInitialSaseState());
-    setCopiedReport(false);
+    setAppResults({});
+    setDnsResults({});
+    setBusyKey(null);
     setSpans([]);
   };
 
-  const handleEvaluateAccess = async (directOriginProbe = false) => {
-    setBusy(true);
+  const handleLaunchApp = async (appId: TargetAppId) => {
+    const currentSid = sessionIdRef.current;
+    setBusyKey(`app:${appId}`);
     try {
+      const candidateState: SaseTunnelState = {
+        ...state,
+        targetApp: appId
+      };
       const { nextState, span } = await evaluateAccessWithEdgeFallback(
-        state,
-        sessionId,
-        directOriginProbe
+        candidateState,
+        currentSid,
+        false
       );
+      if (sessionIdRef.current !== currentSid) return;
       setState(nextState);
+      if (nextState.lastAccessResult) {
+        setAppResults((prev) => ({
+          ...prev,
+          [appId]: nextState.lastAccessResult!
+        }));
+      }
       recordSpan(span);
     } finally {
-      setBusy(false);
+      setBusyKey(null);
     }
   };
 
   const handleResolveDns = async (domain: DnsDomainPreset) => {
-    setBusy(true);
+    const currentSid = sessionIdRef.current;
+    setBusyKey(`dns:${domain}`);
     try {
-      const { nextState, span } = await resolveDnsWithEdgeFallback(state, sessionId, domain);
+      const { nextState, span } = await resolveDnsWithEdgeFallback(state, currentSid, domain);
+      if (sessionIdRef.current !== currentSid) return;
       setState(nextState);
+      if (nextState.lastDnsResult) {
+        setDnsResults((prev) => ({
+          ...prev,
+          [domain]: nextState.lastDnsResult!
+        }));
+      }
       recordSpan(span);
     } finally {
-      setBusy(false);
+      setBusyKey(null);
     }
+  };
+
+  const handleToggleAccessPolicy = (
+    key: 'requireWarp' | 'requireDiskEncryption' | 'requireMinOs'
+  ) => {
+    setState((prev) => ({
+      ...prev,
+      accessPolicy: {
+        ...prev.accessPolicy,
+        [key]: !prev.accessPolicy[key]
+      }
+    }));
+  };
+
+  const handleToggleDnsPolicy = (key: 'blockC2' | 'blockMalware' | 'blockShadowAi') => {
+    setState((prev) => ({
+      ...prev,
+      dnsPolicy: {
+        ...prev.dnsPolicy,
+        [key]: !prev.dnsPolicy[key]
+      }
+    }));
   };
 
   const handleApplyZeroTrustBaseline = () => {
@@ -152,49 +224,73 @@ export function SaseTunnelPage({ onBack }: SaseTunnelPageProps): React.ReactElem
     }));
   };
 
-  const handleCopyReport = async () => {
-    const report = exportSasePostureReport(state);
-    try {
-      await navigator.clipboard.writeText(report);
-      setCopiedReport(true);
-      window.setTimeout(() => setCopiedReport(false), 2000);
-    } catch {
-      setCopiedReport(false);
-    }
+  const handleDownloadReport = () => {
+    const blob = new Blob([exportSasePostureReport(state)], {
+      type: 'application/json'
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lab5-sase-posture-${sessionId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const seats: RoleSeatItem<SaseSeatId>[] = useMemo(() => {
-    const accessStatus = state.lastAccessResult?.status;
-    const employeeBadge =
-      accessStatus === 'ACCESS_GRANTED'
-        ? { text: 'TUNNEL GRANTED', tone: 'emerald' as const }
-        : accessStatus === 'ACCESS_DENIED' || accessStatus === 'BLOCKED_NO_PUBLIC_INGRESS'
-          ? { text: '403 BLOCKED', tone: 'crimson' as const }
-          : { text: DEVICE_PROFILES[state.deviceProfile].warpConnected ? 'WARP ON' : 'UNMANAGED', tone: 'amber' as const };
+  const allAccessProtected =
+    state.accessPolicy.requireWarp &&
+    state.accessPolicy.requireDiskEncryption &&
+    state.accessPolicy.requireMinOs;
+  const allDnsProtected =
+    state.dnsPolicy.blockC2 &&
+    state.dnsPolicy.blockMalware &&
+    state.dnsPolicy.blockShadowAi;
+  const allPoliciesHardened = allAccessProtected && allDnsProtected;
 
-    const allDnsProtected =
-      state.dnsPolicy.blockC2 && state.dnsPolicy.blockMalware && state.dnsPolicy.blockShadowAi;
-    const adminBadge = allDnsProtected && state.accessPolicy.requireMinOs
-      ? { text: 'ZERO-TRUST HARDENED', tone: 'emerald' as const }
-      : { text: 'POLICY GAPS', tone: 'amber' as const, pulse: true };
+  const globalStatusLabel = allPoliciesHardened
+    ? state.lastAccessResult?.status === 'ACCESS_GRANTED'
+      ? 'Zero-Trust Verified'
+      : 'Policies Hardened'
+    : 'Policy Gaps Open';
+
+  const seats: RoleSeatItem<SaseSeatId>[] = useMemo(() => {
+    const riskyDnsAllowed = state.dnsHistory.some(
+      (d) =>
+        d.status === 'ALLOWED' &&
+        (d.category === 'SHADOW_AI_GENAI' ||
+          d.category === 'COMMAND_AND_CONTROL' ||
+          d.category === 'MALWARE')
+    );
+
+    const staffNeedsVerify =
+      allPoliciesHardened && state.lastAccessResult?.status !== 'ACCESS_GRANTED';
 
     return [
       {
         id: 'remote-employee',
         name: 'Samira Al-Mansoor',
-        roleLabel: 'Remote Staff · Endpoint Client',
-        appLabel: 'Browser & WARP Posture Simulator',
-        badge: employeeBadge
+        roleLabel: 'Remote Staff',
+        appLabel: 'Corporate Browser & Internal App Portal',
+        avatarInitials: 'SA',
+        badge: staffNeedsVerify
+          ? { text: 'Verify Access', tone: 'blue', pulse: true }
+          : null
       },
       {
         id: 'net-admin',
         name: 'Carlos Mendez',
-        roleLabel: 'Network Sec · Cloudflare One Admin',
-        appLabel: 'Access, Tunnel & Gateway DNS Console',
-        badge: adminBadge
+        roleLabel: 'Network Security',
+        appLabel: 'Access & Tunnel Policy Console',
+        avatarInitials: 'CM',
+        badge: !allPoliciesHardened
+          ? {
+              text: riskyDnsAllowed ? 'Egress Alert' : 'Policy Gaps',
+              tone: riskyDnsAllowed ? 'crimson' : 'amber',
+              pulse: true
+            }
+          : null
       }
     ];
-  }, [state]);
+  }, [allPoliciesHardened, state.dnsHistory, state.lastAccessResult]);
 
   const decodedProofSections: XRayDecodedProofSection[] = useMemo(() => {
     const sections: XRayDecodedProofSection[] = [];
@@ -241,704 +337,736 @@ export function SaseTunnelPage({ onBack }: SaseTunnelPageProps): React.ReactElem
   }, [state]);
 
   const activeProfile = DEVICE_PROFILES[state.deviceProfile];
-  const trapsDoneCount = [
-    state.traps.trap5aUnmanagedBlocked,
-    state.traps.trap5bDirectOriginBlocked,
-    state.traps.trap5cShadowAiObserved,
-    state.traps.managedAccessGranted,
-    state.traps.shadowAiAndC2Sinkholed
-  ].filter(Boolean).length;
 
   return (
-    <div className="lab-shell">
-      <header className="lab-header">
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        backgroundColor: 'var(--bg-canvas)',
+        color: 'var(--text-primary)'
+      }}
+    >
+      {/* 1. Compact AppShell Top Header */}
+      <header
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 40,
+          backgroundColor: 'rgba(255, 255, 255, 0.96)',
+          backdropFilter: 'blur(8px)',
+          borderBottom: '1px solid var(--border-subtle)'
+        }}
+      >
         <div
           style={{
-            maxWidth: 980,
+            maxWidth: '1280px',
             margin: '0 auto',
+            padding: '0 16px',
+            height: '56px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            gap: 12,
-            flexWrap: 'wrap',
-            padding: '10px 20px'
+            gap: '12px'
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <button type="button" className="btn-sm" onClick={onBack}>
-              <ArrowLeft size={14} /> All Labs
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+            <button
+              type="button"
+              onClick={onBack}
+              className="btn btn-sm"
+              style={{ padding: '5px 9px' }}
+              title="All Labs"
+            >
+              <ArrowLeft size={13} />
+              <span>All Labs</span>
             </button>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>
-                Zero-Trust SASE &amp; Browser-to-Origin Tunnel
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                Lab 5 · Guided Sandbox ($0.00/mo) · 0 Public Ports
-              </div>
-            </div>
+            <span
+              style={{
+                fontSize: '14px',
+                fontWeight: 700,
+                color: 'var(--text-primary)',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              Zero-Trust SASE &amp; Browser-to-Origin Tunnel
+            </span>
+            <span
+              className={`badge ${allPoliciesHardened ? 'badge-emerald' : 'badge-amber'}`}
+              style={{ whiteSpace: 'nowrap', fontSize: '12px' }}
+            >
+              {globalStatusLabel}
+            </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span className="badge badge-blue">
-              Milestones {trapsDoneCount}/5
-            </span>
-            <button type="button" className="btn-sm" onClick={handleReset}>
-              <RotateCcw size={13} /> Reset
-            </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+            <RoleSwitcherBar
+              seats={seats}
+              activeSeatId={activeSeat}
+              onSelectSeat={setActiveSeat}
+              variant="dropdown"
+              ariaLabel="Switch workspace persona"
+            />
+
+            <div id="tour-lab-controls" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <button
+                type="button"
+                onClick={startLabTour}
+                className="btn btn-sm"
+                style={{
+                  backgroundColor: 'var(--accent-primary-dim)',
+                  borderColor: 'var(--accent-primary-border)',
+                  color: 'var(--accent-primary-ink)',
+                  fontSize: '13px'
+                }}
+              >
+                <Compass size={14} />
+                <span>Lab Tour</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleReset}
+                className="btn btn-sm"
+                style={{ fontSize: '13px' }}
+              >
+                <RotateCcw size={14} />
+                <span>Reset</span>
+              </button>
+            </div>
           </div>
         </div>
       </header>
 
-      <main className="lab-workspace">
-        <RoleSwitcherBar
-          seats={seats}
-          activeSeatId={activeSeat}
-          onSelectSeat={(id) => setActiveSeat(id)}
-          ariaLabel="SASE Lab Persona Seats"
-        />
-
-        {/* 4-Phase Cognitive Arc Stepper */}
-        <nav
-          aria-label="4-Phase Cognitive Arc"
+      {/* 2. Center Role Workspace */}
+      <main id="tour-workspace" style={{ flex: 1, padding: '16px', paddingBottom: '88px' }}>
+        <div
           style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))',
-            gap: 8,
-            marginBottom: 16
+            maxWidth: '1280px',
+            margin: '0 auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '14px'
           }}
         >
-          {STAGE_LABELS.map((item) => {
-            const isCurrent = state.stage === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setState((prev) => ({ ...prev, stage: item.id }))}
-                style={{
-                  padding: '9px 12px',
-                  borderRadius: 'var(--radius-md)',
-                  border: isCurrent
-                    ? '1.5px solid var(--accent-primary)'
-                    : '1px solid var(--border-subtle)',
-                  backgroundColor: isCurrent ? 'var(--accent-primary-dim)' : 'var(--bg-surface)',
-                  color: isCurrent ? 'var(--accent-primary)' : 'var(--text-secondary)',
-                  fontWeight: isCurrent ? 700 : 500,
-                  fontSize: 12,
-                  textAlign: 'left',
-                  cursor: 'pointer'
-                }}
-              >
-                {item.short}
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* PHASE 1: DISCOVERY */}
-        {state.stage === 'discovery' && (
-          <section
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-lg)',
-              padding: 20,
-              marginBottom: 16
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: 17, color: 'var(--text-primary)' }}>
-                  Phase 1 · Discovery: Zero-Exposed-Port SASE Topology
-                </h2>
-                <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
-                  Replace legacy VPNs with identity + device posture at the Cloudflare Edge and an outbound-only <code>cloudflared</code> tunnel.
-                </p>
-              </div>
-              <span className="badge badge-emerald">0 Inbound Ports</span>
-            </div>
-
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(185px, 1fr))',
-                gap: 12,
-                marginBottom: 18
-              }}
-            >
-              <div style={{ padding: 14, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-canvas)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
-                  <Laptop size={16} color="#2563eb" /> 1. Endpoint &amp; Browser
-                </div>
-                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
-                  Samira&apos;s device runs Cloudflare WARP + device posture telemetry (Disk Encryption, OS version).
-                </p>
-              </div>
-
-              <div style={{ padding: 14, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-canvas)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
-                  <Shield size={16} color="#059669" /> 2. Cloudflare Edge
-                </div>
-                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
-                  Access evaluates posture &amp; mints <code>cf-access-jwt-assertion</code>; Gateway DNS filters C2, Malware &amp; Shadow-AI.
-                </p>
-              </div>
-
-              <div style={{ padding: 14, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-canvas)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
-                  <Network size={16} color="#7c3aed" /> 3. cloudflared Tunnel
-                </div>
-                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
-                  Connector <code>{state.tunnelConnectorId}</code> dials outbound QUIC to Edge. Zero public IPs or open ports.
-                </p>
-              </div>
-
-              <div style={{ padding: 14, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-canvas)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
-                  <Server size={16} color="#0f172a" /> 4. Private Origin
-                </div>
-                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
-                  Internal ERP (<code>10.24.0.14:8443</code>) accepts traffic only from the local <code>cloudflared</code> daemon.
-                </p>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => setState((prev) => ({ ...prev, stage: 'poe' }))}
-              >
-                Continue to POE Prediction Gate <ArrowRight size={14} />
-              </button>
-            </div>
-          </section>
-        )}
-
-        {/* PHASE 2: POE GATE */}
-        {state.stage === 'poe' && (
-          <section
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-lg)',
-              padding: 20,
-              marginBottom: 16
-            }}
-          >
-            <h2 style={{ margin: '0 0 6px', fontSize: 17, color: 'var(--text-primary)' }}>
-              Phase 2 · Predict · Observe · Explain (POE Gate)
-            </h2>
-            <p style={{ margin: '0 0 14px', fontSize: 13, color: 'var(--text-secondary)' }}>
-              Predict what happens when an unmanaged BYOD laptop accesses Internal ERP AND resolves <code>shadow-llm-upload.example</code> under the initial Gateway policy.
-            </p>
-
-            {/* Step 1: Predict */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
-                Step 1 · Predict the Outcome
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {POE_OPTIONS.map((opt) => {
-                  const selected = state.poePrediction === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => setState((prev) => ({ ...prev, poePrediction: opt.id }))}
-                      style={{
-                        padding: '10px 14px',
-                        borderRadius: 'var(--radius-md)',
-                        border: selected
-                          ? '1.5px solid var(--accent-primary)'
-                          : '1px solid var(--border-subtle)',
-                        backgroundColor: selected ? 'var(--accent-primary-dim)' : 'var(--bg-canvas)',
-                        textAlign: 'left',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
-                        {opt.label}
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-                        {opt.detail}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Step 2: Observe */}
-            <div style={{ marginBottom: 16, opacity: state.poePrediction ? 1 : 0.55 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
-                Step 2 · Observe Live Edge Traps
-              </div>
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  className="btn-danger-soft"
-                  disabled={!state.poePrediction || busy}
-                  onClick={() => {
-                    setState((prev) => ({ ...prev, deviceProfile: 'unmanaged-byod' }));
-                    void handleEvaluateAccess(false);
-                  }}
-                >
-                  <ShieldAlert size={14} /> Trap 5A: Unmanaged BYOD Access
-                </button>
-                <button
-                  type="button"
-                  className="btn-amber-soft"
-                  disabled={!state.poePrediction || busy}
-                  onClick={() => void handleEvaluateAccess(true)}
-                >
-                  <Terminal size={14} /> Trap 5B: Direct-to-Origin IP Scan
-                </button>
-                <button
-                  type="button"
-                  className="btn-dark"
-                  disabled={!state.poePrediction || busy}
-                  onClick={() => void handleResolveDns('shadow-llm-upload.example')}
-                >
-                  <Globe size={14} /> Trap 5C: Shadow-AI DNS Lookup
-                </button>
-              </div>
-            </div>
-
-            {/* Live Observe Output */}
-            {(state.lastAccessResult || state.lastDnsResult) && (
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-                  gap: 12,
-                  marginBottom: 16
-                }}
-              >
-                {state.lastAccessResult && (
-                  <div style={{ padding: 12, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-canvas)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                      <span style={{ fontWeight: 600, fontSize: 12 }}>Access / Origin Gate</span>
-                      <span className={`badge ${state.lastAccessResult.http_status === 200 ? 'badge-emerald' : 'badge-crimson'}`}>
-                        HTTP {state.lastAccessResult.http_status}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                      {state.lastAccessResult.message}
-                    </div>
-                  </div>
-                )}
-
-                {state.lastDnsResult && (
-                  <div style={{ padding: 12, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-canvas)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                      <span style={{ fontWeight: 600, fontSize: 12 }}>Gateway DNS Resolver</span>
-                      <span className={`badge ${state.lastDnsResult.dns_rcode === 'NXDOMAIN' ? 'badge-emerald' : 'badge-amber'}`}>
-                        {state.lastDnsResult.dns_rcode} · {state.lastDnsResult.resolved_ip}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                      {state.lastDnsResult.message}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Step 3: Explain */}
-            {state.poeExplanationUnlocked && (
-              <div
-                style={{
-                  padding: 14,
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px solid #a7f3d0',
-                  backgroundColor: '#ecfdf5',
-                  marginBottom: 14
-                }}
-              >
-                <div style={{ fontWeight: 700, fontSize: 13, color: '#065f46', marginBottom: 4 }}>
-                  Step 3 · Explain: Why Access Blocked Device Posture, While Gateway DNS Leaked Shadow-AI
-                </div>
-                <p style={{ margin: 0, fontSize: 12, color: '#065f46' }}>
-                  Cloudflare Access enforces device posture (WARP + Disk Encryption) before traffic ever touches the <code>cloudflared</code> tunnel, and direct IP scans fail because the origin has 0 public ports. However, outbound DNS queries to <code>shadow-llm-upload.example</code> still resolve (<code>NOERROR</code>) until Carlos Mendez enables Gateway DNS category blocks in Practice mode.
-                </p>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
-              <button
-                type="button"
-                className="btn-sm"
-                onClick={() => setState((prev) => ({ ...prev, stage: 'discovery' }))}
-              >
-                <ArrowLeft size={14} /> Back
-              </button>
-              <button
-                type="button"
-                className="btn-primary"
-                disabled={!state.poeExplanationUnlocked}
-                onClick={() => {
-                  setActiveSeat('net-admin');
-                  setState((prev) => ({ ...prev, stage: 'practice' }));
-                }}
-              >
-                Proceed to Practice (Patch Policies) <ArrowRight size={14} />
-              </button>
-            </div>
-          </section>
-        )}
-
-        {/* PHASE 3: PRACTICE (2-SEAT WORKBENCH) */}
-        {state.stage === 'practice' && (
-          <section
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-              gap: 16,
-              marginBottom: 16
-            }}
-          >
-            {/* Seat 1: Remote Employee */}
-            <div
+          {/* ==================== SEAT 1: SAMIRA AL-MANSOOR — CORPORATE BROWSER & INTERNAL APP PORTAL ==================== */}
+          {activeSeat === 'remote-employee' && (
+            <section
+              aria-label="Corporate Browser and Internal App Portal"
               style={{
                 backgroundColor: 'var(--bg-surface)',
-                border: activeSeat === 'remote-employee' ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                border: '1px solid var(--border-subtle)',
                 borderRadius: 'var(--radius-lg)',
-                padding: 18,
-                minWidth: 0
+                boxShadow: 'var(--shadow-sm)',
+                overflow: 'hidden'
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>
-                  Remote Staff · Endpoint Simulator
-                </div>
-                <span className="badge badge-blue">Samira Al-Mansoor</span>
-              </div>
-
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Endpoint Device Posture Profile
-              </label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
-                {(Object.keys(DEVICE_PROFILES) as DeviceProfileId[]).map((pid) => {
-                  const prof = DEVICE_PROFILES[pid];
-                  const selected = state.deviceProfile === pid;
-                  return (
-                    <button
-                      key={pid}
-                      type="button"
-                      onClick={() => {
-                        setActiveSeat('remote-employee');
-                        setState((prev) => ({ ...prev, deviceProfile: pid }));
-                      }}
-                      style={{
-                        padding: '8px 10px',
-                        borderRadius: 'var(--radius-md)',
-                        border: selected ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
-                        backgroundColor: selected ? 'var(--accent-primary-dim)' : 'var(--bg-canvas)',
-                        textAlign: 'left',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <div style={{ fontWeight: 600, fontSize: 12 }}>{prof.label}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                        WARP: {prof.warpConnected ? 'ON' : 'OFF'} · Disk Enc: {prof.diskEncrypted ? 'YES' : 'NO'} · {prof.osVersion}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Target Private Application (via cloudflared)
-              </label>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-                {(Object.keys(TARGET_APPS) as TargetAppId[]).map((appId) => (
-                  <button
-                    key={appId}
-                    type="button"
-                    className={state.targetApp === appId ? 'btn-primary btn-sm' : 'btn-sm'}
-                    onClick={() => setState((prev) => ({ ...prev, targetApp: appId }))}
-                  >
-                    {TARGET_APPS[appId].label}
-                  </button>
-                ))}
-              </div>
-
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  disabled={busy}
-                  onClick={() => {
-                    setActiveSeat('remote-employee');
-                    void handleEvaluateAccess(false);
-                  }}
-                >
-                  <Lock size={14} /> Connect via Cloudflare Access
-                </button>
-                <button
-                  type="button"
-                  className="btn-amber-soft"
-                  disabled={busy}
-                  onClick={() => {
-                    setActiveSeat('remote-employee');
-                    void handleEvaluateAccess(true);
-                  }}
-                >
-                  <Terminal size={14} /> Probe Direct Origin IP
-                </button>
-              </div>
-
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Test Outbound DNS Egress Queries
-              </div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-                {DNS_PRESETS.map((preset) => (
-                  <button
-                    key={preset.domain}
-                    type="button"
-                    className="btn-sm"
-                    disabled={busy}
-                    onClick={() => {
-                      setActiveSeat('remote-employee');
-                      void handleResolveDns(preset.domain);
+              <div
+                style={{
+                  padding: '10px 18px',
+                  backgroundColor: '#0f172a',
+                  color: '#ffffff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  flexWrap: 'wrap'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span
+                    style={{
+                      width: '26px',
+                      height: '26px',
+                      borderRadius: '5px',
+                      backgroundColor: '#2563eb',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 700,
+                      fontSize: '12px'
                     }}
                   >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-
-              {state.lastAccessResult && (
-                <div style={{ padding: 10, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-canvas)', fontSize: 12, marginBottom: 8 }}>
-                  <strong>Access Result ({state.lastAccessResult.http_status}):</strong>{' '}
-                  {state.lastAccessResult.message}
+                    <Globe size={15} />
+                  </span>
+                  <span style={{ fontSize: '15px', fontWeight: 700 }}>
+                    Corporate Browser &amp; Internal App Portal
+                  </span>
                 </div>
-              )}
-
-              {state.lastDnsResult && (
-                <div style={{ padding: 10, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-canvas)', fontSize: 12 }}>
-                  <strong>DNS ({state.lastDnsResult.dns_rcode}):</strong>{' '}
-                  <code>{state.lastDnsResult.domain}</code> → <code>{state.lastDnsResult.resolved_ip}</code> ({state.lastDnsResult.matched_policy})
-                </div>
-              )}
-            </div>
-
-            {/* Seat 2: Network Admin */}
-            <div
-              style={{
-                backgroundColor: 'var(--bg-surface)',
-                border: activeSeat === 'net-admin' ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-lg)',
-                padding: 18,
-                minWidth: 0
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>
-                  Cloudflare One Admin Console
-                </div>
-                <span className="badge badge-emerald">Carlos Mendez</span>
+                <span style={{ fontSize: '13.5px', color: '#e2e8f0' }}>
+                  Samira Al-Mansoor · Remote Staff
+                </span>
               </div>
 
-              <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>
-                Cloudflare Access Device Posture Rules
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={state.accessPolicy.requireWarp}
-                    onChange={(e) =>
-                      setState((prev) => ({
-                        ...prev,
-                        accessPolicy: { ...prev.accessPolicy, requireWarp: e.target.checked }
-                      }))
-                    }
-                  />
-                  Require WARP Zero-Trust Client
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={state.accessPolicy.requireDiskEncryption}
-                    onChange={(e) =>
-                      setState((prev) => ({
-                        ...prev,
-                        accessPolicy: { ...prev.accessPolicy, requireDiskEncryption: e.target.checked }
-                      }))
-                    }
-                  />
-                  Require Full-Disk Encryption (FileVault / BitLocker)
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={state.accessPolicy.requireMinOs}
-                    onChange={(e) =>
-                      setState((prev) => ({
-                        ...prev,
-                        accessPolicy: { ...prev.accessPolicy, requireMinOs: e.target.checked }
-                      }))
-                    }
-                  />
-                  Require OS &gt;= macOS 14.5 (Blocks Stale OS)
-                </label>
-              </div>
-
-              <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>
-                Cloudflare Gateway DNS Egress Filtering
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={state.dnsPolicy.blockC2}
-                    onChange={(e) =>
-                      setState((prev) => ({
-                        ...prev,
-                        dnsPolicy: { ...prev.dnsPolicy, blockC2: e.target.checked }
-                      }))
-                    }
-                  />
-                  Sinkhole Command &amp; Control (C2) Domains
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={state.dnsPolicy.blockMalware}
-                    onChange={(e) =>
-                      setState((prev) => ({
-                        ...prev,
-                        dnsPolicy: { ...prev.dnsPolicy, blockMalware: e.target.checked }
-                      }))
-                    }
-                  />
-                  Sinkhole Malware Staging Hosts
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={state.dnsPolicy.blockShadowAi}
-                    onChange={(e) =>
-                      setState((prev) => ({
-                        ...prev,
-                        dnsPolicy: { ...prev.dnsPolicy, blockShadowAi: e.target.checked }
-                      }))
-                    }
-                  />
-                  Block Unapproved Shadow-AI GenAI Uploads
-                </label>
-              </div>
-
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-                <button
-                  type="button"
-                  className="btn-emerald"
-                  onClick={handleApplyZeroTrustBaseline}
-                >
-                  <ShieldCheck size={14} /> Apply Zero-Trust Baseline
-                </button>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => setState((prev) => ({ ...prev, stage: 'reflection' }))}
-                >
-                  View Reflection &amp; Diff <ArrowRight size={14} />
-                </button>
-              </div>
-
-              <div style={{ padding: 10, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-canvas)', fontSize: 12 }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                  <Activity size={13} style={{ verticalAlign: 'middle', marginRight: 4 }} />
-                  Active Profile: {activeProfile.label}
-                </div>
-                <div style={{ color: 'var(--text-muted)' }}>
-                  Tunnel: <code>{state.tunnelConnectorId}</code> · QUIC Outbound-Only · 0 Public Ports
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* PHASE 4: REFLECTION */}
-        {state.stage === 'reflection' && (
-          <section
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-lg)',
-              padding: 20,
-              marginBottom: 16
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: 17, color: 'var(--text-primary)' }}>
-                  Phase 4 · Reflection: Zero-Exposed-Port Posture Summary
-                </h2>
-                <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
-                  Before vs. After edge policy diff and verification milestones.
-                </p>
-              </div>
-              <button type="button" className="btn-sm" onClick={() => void handleCopyReport()}>
-                <Copy size={13} /> {copiedReport ? 'Copied JSON!' : 'Copy Posture Report'}
-              </button>
-            </div>
-
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                gap: 12,
-                marginBottom: 16
-              }}
-            >
-              {[
-                { label: 'Trap 5A · Unmanaged Device Blocked (403)', done: state.traps.trap5aUnmanagedBlocked },
-                { label: 'Trap 5B · Direct Origin Scan Blocked (0 Ports)', done: state.traps.trap5bDirectOriginBlocked },
-                { label: 'Trap 5C · Shadow-AI Leak Observed in POE', done: state.traps.trap5cShadowAiObserved },
-                { label: 'Managed Laptop Granted Tunnel Access (200)', done: state.traps.managedAccessGranted },
-                { label: 'Shadow-AI / C2 Sinkholed (NXDOMAIN 0.0.0.0)', done: state.traps.shadowAiAndC2Sinkholed }
-              ].map((item) => (
+              <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                {/* Device Posture Profile Selector */}
                 <div
-                  key={item.label}
                   style={{
-                    padding: 12,
-                    borderRadius: 'var(--radius-md)',
                     border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-md)',
                     backgroundColor: 'var(--bg-canvas)',
+                    padding: '14px 16px',
                     display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    fontSize: 12
+                    flexDirection: 'column',
+                    gap: '10px'
                   }}
                 >
-                  {item.done ? (
-                    <CheckCircle2 size={16} color="#059669" />
-                  ) : (
-                    <AlertTriangle size={16} color="#d97706" />
-                  )}
-                  <span>{item.label}</span>
-                </div>
-              ))}
-            </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '12px',
+                      flexWrap: 'wrap'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Laptop size={16} style={{ color: 'var(--accent-primary)' }} />
+                      <span style={{ fontSize: '14.5px', fontWeight: 700 }}>Active Endpoint Device</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <span className={`badge ${activeProfile.warpConnected ? 'badge-emerald' : 'badge-crimson'}`}>
+                        WARP: {activeProfile.warpConnected ? 'CONNECTED' : 'OFF'}
+                      </span>
+                      <span className={`badge ${activeProfile.diskEncrypted ? 'badge-emerald' : 'badge-crimson'}`}>
+                        Disk Encryption: {activeProfile.diskEncrypted ? 'ON' : 'OFF'}
+                      </span>
+                      <span className={`badge ${activeProfile.osVersionOk ? 'badge-emerald' : 'badge-amber'}`}>
+                        {activeProfile.osVersion}
+                      </span>
+                    </div>
+                  </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
-              <button
-                type="button"
-                className="btn-sm"
-                onClick={() => setState((prev) => ({ ...prev, stage: 'practice' }))}
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {DEVICE_IDS.map((pid) => {
+                      const prof = DEVICE_PROFILES[pid];
+                      const isSelected = state.deviceProfile === pid;
+                      return (
+                        <button
+                          key={pid}
+                          type="button"
+                          className={`btn btn-sm ${isSelected ? 'btn-primary' : ''}`}
+                          style={{ fontSize: '13.5px', padding: '7px 13px' }}
+                          onClick={() => setState((prev) => ({ ...prev, deviceProfile: pid }))}
+                        >
+                          {prof.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Internal Applications Table */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div>
+                    <h2 style={{ fontSize: '15.5px', fontWeight: 700, margin: 0 }}>
+                      Internal Applications (Zero-Trust Tunnel)
+                    </h2>
+                    <p style={{ fontSize: '13.5px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                      Access private corporate applications without a legacy VPN; every request is verified against endpoint posture at the edge.
+                    </p>
+                  </div>
+
+                  <div className="data-table-wrapper">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Application</th>
+                          <th>Private Origin</th>
+                          <th>Tunnel Exposure</th>
+                          <th>Access Status</th>
+                          <th style={{ textAlign: 'right' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {APP_IDS.map((appId) => {
+                          const app = TARGET_APPS[appId];
+                          const res = appResults[appId];
+                          const isBusy = busyKey === `app:${appId}`;
+                          return (
+                            <tr key={appId}>
+                              <td>
+                                <div style={{ fontWeight: 700, fontSize: '14px' }}>{app.label}</div>
+                                <div className="mono" style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>
+                                  https://{app.hostname}
+                                </div>
+                              </td>
+                              <td className="mono">{app.originIp}</td>
+                              <td>
+                                <span className="badge badge-blue">0 Public Ports · QUIC</span>
+                              </td>
+                              <td>
+                                {res ? (
+                                  res.status === 'ACCESS_GRANTED' ? (
+                                    <span className="badge badge-emerald">GRANTED (200)</span>
+                                  ) : (
+                                    <span className="badge badge-crimson">DENIED (403)</span>
+                                  )
+                                ) : (
+                                  <span className="badge">NOT CONNECTED</span>
+                                )}
+                              </td>
+                              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                <button
+                                  type="button"
+                                  className="btn btn-primary btn-sm"
+                                  style={{ fontSize: '13px', padding: '6px 12px' }}
+                                  disabled={busyKey !== null}
+                                  onClick={() => void handleLaunchApp(appId)}
+                                >
+                                  {isBusy ? 'Connecting…' : 'Open App'}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {state.lastAccessResult && (
+                    <div
+                      style={{
+                        padding: '12px 14px',
+                        borderRadius: '8px',
+                        backgroundColor:
+                          state.lastAccessResult.status === 'ACCESS_GRANTED'
+                            ? 'var(--accent-emerald-dim)'
+                            : 'var(--accent-crimson-dim)',
+                        border: `1px solid ${
+                          state.lastAccessResult.status === 'ACCESS_GRANTED'
+                            ? 'var(--accent-emerald-border)'
+                            : 'var(--accent-crimson-border)'
+                        }`,
+                        color:
+                          state.lastAccessResult.status === 'ACCESS_GRANTED'
+                            ? 'var(--accent-emerald-ink)'
+                            : 'var(--accent-crimson-ink)',
+                        fontSize: '13.5px'
+                      }}
+                    >
+                      <strong>
+                        {state.lastAccessResult.status === 'ACCESS_GRANTED'
+                          ? `Connected via ${state.tunnelConnectorId} (HTTP 200):`
+                          : 'Access Denied by Edge Policy (HTTP 403):'}
+                      </strong>{' '}
+                      {state.lastAccessResult.message}
+                    </div>
+                  )}
+                </div>
+
+                {/* Outbound Web & DNS Destinations Table */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div>
+                    <h2 style={{ fontSize: '15.5px', fontWeight: 700, margin: 0 }}>
+                      Web &amp; DNS Destinations (Gateway Resolver)
+                    </h2>
+                    <p style={{ fontSize: '13.5px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                      Test how corporate Gateway DNS handles internal hosts, approved SaaS, and restricted external domains.
+                    </p>
+                  </div>
+
+                  <div className="data-table-wrapper">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Destination</th>
+                          <th>Category</th>
+                          <th>DNS Resolution</th>
+                          <th style={{ textAlign: 'right' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {DNS_PRESETS.map((preset) => {
+                          const res = dnsResults[preset.domain];
+                          const isBusy = busyKey === `dns:${preset.domain}`;
+                          return (
+                            <tr key={preset.domain}>
+                              <td>
+                                <div style={{ fontWeight: 600, fontSize: '14px' }}>{preset.label}</div>
+                                <div className="mono" style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>
+                                  {preset.domain}
+                                </div>
+                              </td>
+                              <td>
+                                <span className="badge">{preset.riskTag}</span>
+                              </td>
+                              <td>
+                                {res ? (
+                                  res.status === 'BLOCKED_SINKHOLE' ? (
+                                    <span className="badge badge-crimson">
+                                      BLOCKED · NXDOMAIN (0.0.0.0)
+                                    </span>
+                                  ) : (
+                                    <span className="badge badge-emerald">
+                                      RESOLVED · {res.resolved_ip}
+                                    </span>
+                                  )
+                                ) : (
+                                  <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>
+                                    Not queried
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  style={{ fontSize: '13px', padding: '6px 12px' }}
+                                  disabled={busyKey !== null}
+                                  onClick={() => void handleResolveDns(preset.domain)}
+                                >
+                                  {isBusy ? 'Resolving…' : 'Resolve DNS'}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* ==================== SEAT 2: CARLOS MENDEZ — ACCESS & TUNNEL POLICY CONSOLE ==================== */}
+          {activeSeat === 'net-admin' && (
+            <section
+              aria-label="Access and Tunnel Policy Console"
+              style={{
+                backgroundColor: 'var(--bg-surface)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-lg)',
+                boxShadow: 'var(--shadow-sm)',
+                overflow: 'hidden'
+              }}
+            >
+              <div
+                style={{
+                  padding: '10px 18px',
+                  backgroundColor: 'var(--bg-canvas)',
+                  borderBottom: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  flexWrap: 'wrap'
+                }}
               >
-                <ArrowLeft size={14} /> Back to Practice
-              </button>
-              <button type="button" className="btn-primary" onClick={handleReset}>
-                <RotateCcw size={14} /> Reset Lab Session
-              </button>
-            </div>
-          </section>
-        )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span
+                    style={{
+                      width: '26px',
+                      height: '26px',
+                      borderRadius: '5px',
+                      backgroundColor: '#7c3aed',
+                      color: '#ffffff',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 700,
+                      fontSize: '12px'
+                    }}
+                  >
+                    NS
+                  </span>
+                  <span style={{ fontSize: '15px', fontWeight: 700 }}>
+                    Access &amp; Tunnel Policy Console
+                  </span>
+                </div>
+                <span style={{ fontSize: '13.5px', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                  Carlos Mendez · Network Security
+                </span>
+              </div>
+
+              <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                {/* Policy Table Header */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                    flexWrap: 'wrap'
+                  }}
+                >
+                  <div>
+                    <h2 style={{ fontSize: '15.5px', fontWeight: 700, margin: 0 }}>
+                      Access Device Posture &amp; Gateway DNS Policies
+                    </h2>
+                    <p style={{ fontSize: '13.5px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                      Enforce endpoint posture requirements for private tunnel access and sinkhole high-risk outbound DNS categories.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      style={{ fontSize: '13px', padding: '7px 12px' }}
+                      onClick={handleDownloadReport}
+                    >
+                      <Download size={14} />
+                      <span>Export Posture JSON</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      style={{ fontSize: '13px', padding: '7px 13px' }}
+                      disabled={allPoliciesHardened}
+                      onClick={handleApplyZeroTrustBaseline}
+                    >
+                      <ShieldCheck size={14} />
+                      <span>{allPoliciesHardened ? 'Zero-Trust Baseline Active' : 'Apply Zero-Trust Baseline'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="data-table-wrapper">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Policy Rule</th>
+                        <th>Plane</th>
+                        <th>Status</th>
+                        <th style={{ textAlign: 'right' }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>
+                          <div style={{ fontWeight: 700, fontSize: '14px' }}>Require Cloudflare WARP Client</div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                            Block internal application requests unless the endpoint maintains an active WARP tunnel.
+                          </div>
+                        </td>
+                        <td><span className="badge badge-blue">Access Posture</span></td>
+                        <td>
+                          {state.accessPolicy.requireWarp ? (
+                            <span className="badge badge-emerald">ENFORCED</span>
+                          ) : (
+                            <span className="badge badge-amber">DISABLED</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${state.accessPolicy.requireWarp ? '' : 'btn-primary'}`}
+                            style={{ fontSize: '13px', padding: '6px 12px' }}
+                            onClick={() => handleToggleAccessPolicy('requireWarp')}
+                          >
+                            {state.accessPolicy.requireWarp ? 'Disable' : 'Enforce'}
+                          </button>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <div style={{ fontWeight: 700, fontSize: '14px' }}>Require Full Disk Encryption</div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                            Verify FileVault / BitLocker disk encryption before minting a Cloudflare Access JWT.
+                          </div>
+                        </td>
+                        <td><span className="badge badge-blue">Access Posture</span></td>
+                        <td>
+                          {state.accessPolicy.requireDiskEncryption ? (
+                            <span className="badge badge-emerald">ENFORCED</span>
+                          ) : (
+                            <span className="badge badge-amber">DISABLED</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${state.accessPolicy.requireDiskEncryption ? '' : 'btn-primary'}`}
+                            style={{ fontSize: '13px', padding: '6px 12px' }}
+                            onClick={() => handleToggleAccessPolicy('requireDiskEncryption')}
+                          >
+                            {state.accessPolicy.requireDiskEncryption ? 'Disable' : 'Enforce'}
+                          </button>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <div style={{ fontWeight: 700, fontSize: '14px' }}>Require Minimum OS Version (macOS 14.5+)</div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                            Reject endpoints running outdated operating system patch levels from accessing private origins.
+                          </div>
+                        </td>
+                        <td><span className="badge badge-blue">Access Posture</span></td>
+                        <td>
+                          {state.accessPolicy.requireMinOs ? (
+                            <span className="badge badge-emerald">ENFORCED</span>
+                          ) : (
+                            <span className="badge badge-amber">DISABLED</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${state.accessPolicy.requireMinOs ? '' : 'btn-primary'}`}
+                            style={{ fontSize: '13px', padding: '6px 12px' }}
+                            onClick={() => handleToggleAccessPolicy('requireMinOs')}
+                          >
+                            {state.accessPolicy.requireMinOs ? 'Disable' : 'Enforce'}
+                          </button>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <div style={{ fontWeight: 700, fontSize: '14px' }}>Block Command &amp; Control (C2) Domains</div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                            Sinkhole known C2 beacon domains to NXDOMAIN (0.0.0.0) at the edge DNS resolver.
+                          </div>
+                        </td>
+                        <td><span className="badge">Gateway DNS</span></td>
+                        <td>
+                          {state.dnsPolicy.blockC2 ? (
+                            <span className="badge badge-emerald">SINKHOLE</span>
+                          ) : (
+                            <span className="badge badge-amber">ALLOW</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${state.dnsPolicy.blockC2 ? '' : 'btn-primary'}`}
+                            style={{ fontSize: '13px', padding: '6px 12px' }}
+                            onClick={() => handleToggleDnsPolicy('blockC2')}
+                          >
+                            {state.dnsPolicy.blockC2 ? 'Allow' : 'Block'}
+                          </button>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <div style={{ fontWeight: 700, fontSize: '14px' }}>Block Malware Dropper Hosts</div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                            Prevent endpoints from resolving malware payload staging and dropper hosts.
+                          </div>
+                        </td>
+                        <td><span className="badge">Gateway DNS</span></td>
+                        <td>
+                          {state.dnsPolicy.blockMalware ? (
+                            <span className="badge badge-emerald">SINKHOLE</span>
+                          ) : (
+                            <span className="badge badge-amber">ALLOW</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${state.dnsPolicy.blockMalware ? '' : 'btn-primary'}`}
+                            style={{ fontSize: '13px', padding: '6px 12px' }}
+                            onClick={() => handleToggleDnsPolicy('blockMalware')}
+                          >
+                            {state.dnsPolicy.blockMalware ? 'Allow' : 'Block'}
+                          </button>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <div style={{ fontWeight: 700, fontSize: '14px' }}>Block Unsanctioned Shadow-AI Uploads</div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                            Sinkhole unauthorized GenAI upload endpoints to prevent corporate data exfiltration.
+                          </div>
+                        </td>
+                        <td><span className="badge">Gateway DNS</span></td>
+                        <td>
+                          {state.dnsPolicy.blockShadowAi ? (
+                            <span className="badge badge-emerald">SINKHOLE</span>
+                          ) : (
+                            <span className="badge badge-amber">ALLOW</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${state.dnsPolicy.blockShadowAi ? '' : 'btn-primary'}`}
+                            style={{ fontSize: '13px', padding: '6px 12px' }}
+                            onClick={() => handleToggleDnsPolicy('blockShadowAi')}
+                          >
+                            {state.dnsPolicy.blockShadowAi ? 'Allow' : 'Block'}
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Tunnel Connector Table */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <h2 style={{ fontSize: '15.5px', fontWeight: 700, margin: 0 }}>
+                    Active `cloudflared` Tunnel Connectors
+                  </h2>
+                  <div className="data-table-wrapper">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Connector ID</th>
+                          <th>Edge Colo</th>
+                          <th>Protocol</th>
+                          <th>Origin Network</th>
+                          <th>Inbound Ports</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="mono" style={{ fontWeight: 700 }}>{state.tunnelConnectorId}</td>
+                          <td className="mono">SIN</td>
+                          <td className="mono">QUIC (Outbound-Only)</td>
+                          <td className="mono">10.24.0.0/24</td>
+                          <td><span className="badge badge-emerald">0 Public Ports</span></td>
+                          <td><span className="badge badge-emerald">HEALTHY</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Recent Gateway DNS Activity */}
+                {state.dnsHistory.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <h2 style={{ fontSize: '15.5px', fontWeight: 700, margin: 0 }}>
+                      Recent Gateway DNS Queries
+                    </h2>
+                    <div className="data-table-wrapper">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Domain</th>
+                            <th>Category</th>
+                            <th>Matched Policy</th>
+                            <th>Result</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {state.dnsHistory.slice(0, 6).map((item, idx) => (
+                            <tr key={`${item.domain}-${item.timestamp}-${idx}`}>
+                              <td className="mono" style={{ fontWeight: 600 }}>{item.domain}</td>
+                              <td><span className="badge">{item.category}</span></td>
+                              <td className="mono" style={{ fontSize: '12.5px' }}>{item.matched_policy}</td>
+                              <td>
+                                {item.status === 'BLOCKED_SINKHOLE' ? (
+                                  <span className="badge badge-crimson">NXDOMAIN · 0.0.0.0</span>
+                                ) : (
+                                  <span className="badge badge-emerald">NOERROR · {item.resolved_ip}</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+        </div>
       </main>
 
+      {/* 3. Sticky-Bottom X-Ray Telemetry Drawer */}
       <XRayTelemetryDrawer
         spans={spans}
         decodedProofSections={decodedProofSections}
