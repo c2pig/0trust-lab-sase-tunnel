@@ -11,8 +11,10 @@
 
 Lab 5 models a Cloudflare One Zero-Trust SASE deployment that eliminates legacy VPNs and public origin IP exposure:
 
-1. **Endpoint & Browser (`remote-employee` — Samira Al-Mansoor)**:
-   - Simulates 3 device posture profiles (`managed-corp`, `unmanaged-byod`, `stale-os`) with Cloudflare WARP, disk encryption, and OS version signals.
+1. **AppShell Header, `driver.js` Orientation & Dropdown Role Switcher (`remote-employee` ↔ `net-admin`)**:
+   - Compact sticky `56px` AppShell header with `All Labs`, lab title, live status pill, dropdown `RoleSwitcherBar` (with notification dots for pending policy hardening or verification), `Lab Tour` (`driver.js` orientation overlay), and `Reset`.
+   - **Remote Staff (`Samira Al-Mansoor`)**: Corporate Browser & Internal App Portal simulating 3 endpoint posture profiles (`managed-corp`, `unmanaged-byod`, `stale-os`), internal app tunnel launches (`Internal ERP`, `Finance Ledger`, `SSH Bastion`), and Gateway DNS lookups with strict role isolation.
+   - **Network Security (`Carlos Mendez`)**: Access & Tunnel Policy console managing Cloudflare Access posture rules, Gateway DNS egress sinkholes, active `cloudflared` connector telemetry, and recent DNS query logs.
    - Static SPA (`dist/`) is served from Cloudflare Pages via `0trust-lab-router` at `https://lab.0trust.dev/sase-tunnel`.
 2. **Same-Origin Routing & Cloud Run API (`server/app.ts` → synced `server/runtime.ts`, canonical `Dockerfile`)**:
    - `server/app.ts` is a thin lab-specific route wrapper calling `createBaseLabApp` from the canonical synced `server/runtime.ts` (synced from `0trust.dev/templates/lab-runtime/` alongside `server/kvAdapter.ts`, `server/origin.ts`, `server/index.ts`, and the canonical multi-stage `Dockerfile`).
