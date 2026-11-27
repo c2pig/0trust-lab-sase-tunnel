@@ -86,7 +86,31 @@ const VALID_DOMAINS = new Set<DnsDomainPreset>(
   Object.keys(DOMAIN_CATALOG) as DnsDomainPreset[]
 );
 
-const ephemeralDnsStore = new Map<string, SaseDnsKvRecord>();
+const MAX_EPHEMERAL_ENTRIES = 256;
+const ephemeralDnsStore = new Map<string, { value: SaseDnsKvRecord; expiresAt: number }>();
+
+function getEphemeralDns(key: string): SaseDnsKvRecord | null {
+  const entry = ephemeralDnsStore.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    ephemeralDnsStore.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function setEphemeralDns(key: string, value: SaseDnsKvRecord): void {
+  const now = Date.now();
+  for (const [k, v] of ephemeralDnsStore) {
+    if (v.expiresAt <= now) ephemeralDnsStore.delete(k);
+  }
+  if (!ephemeralDnsStore.has(key) && ephemeralDnsStore.size >= MAX_EPHEMERAL_ENTRIES) {
+    const oldestKey = ephemeralDnsStore.keys().next().value;
+    if (oldestKey !== undefined) ephemeralDnsStore.delete(oldestKey);
+  }
+  ephemeralDnsStore.delete(key);
+  ephemeralDnsStore.set(key, { value, expiresAt: now + KV_TTL_SECONDS * 1000 });
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -171,7 +195,7 @@ export async function onRequestPost(context: {
       existing = null;
     }
   } else {
-    existing = ephemeralDnsStore.get(kvKey) || null;
+    existing = getEphemeralDns(kvKey);
   }
 
   const nextQueriesRun = (existing?.dns_queries_run ?? 0) + 1;
@@ -193,7 +217,7 @@ export async function onRequestPost(context: {
       expirationTtl: KV_TTL_SECONDS
     });
   } else {
-    ephemeralDnsStore.set(kvKey, record);
+    setEphemeralDns(kvKey, record);
   }
 
   if (blockedReason) {
