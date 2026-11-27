@@ -66,7 +66,31 @@ const APP_HOSTNAMES: Record<TargetAppId, string> = {
   'admin-ssh-bastion': 'bastion.internal.0trust.corp'
 };
 
-const ephemeralSaseStore = new Map<string, SaseSessionKvRecord>();
+const MAX_EPHEMERAL_ENTRIES = 256;
+const ephemeralSaseStore = new Map<string, { value: SaseSessionKvRecord; expiresAt: number }>();
+
+function getEphemeralSase(key: string): SaseSessionKvRecord | null {
+  const entry = ephemeralSaseStore.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    ephemeralSaseStore.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function setEphemeralSase(key: string, value: SaseSessionKvRecord): void {
+  const now = Date.now();
+  for (const [k, v] of ephemeralSaseStore) {
+    if (v.expiresAt <= now) ephemeralSaseStore.delete(k);
+  }
+  if (!ephemeralSaseStore.has(key) && ephemeralSaseStore.size >= MAX_EPHEMERAL_ENTRIES) {
+    const oldestKey = ephemeralSaseStore.keys().next().value;
+    if (oldestKey !== undefined) ephemeralSaseStore.delete(oldestKey);
+  }
+  ephemeralSaseStore.delete(key);
+  ephemeralSaseStore.set(key, { value, expiresAt: now + KV_TTL_SECONDS * 1000 });
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -154,7 +178,7 @@ export async function onRequestPost(context: {
       existing = null;
     }
   } else {
-    existing = ephemeralSaseStore.get(kvKey) || null;
+    existing = getEphemeralSase(kvKey);
   }
 
   const nextChecksRun = (existing?.access_checks_run ?? 0) + 1;
@@ -181,7 +205,7 @@ export async function onRequestPost(context: {
         expirationTtl: KV_TTL_SECONDS
       });
     } else {
-      ephemeralSaseStore.set(kvKey, record);
+      setEphemeralSase(kvKey, record);
     }
   };
 
