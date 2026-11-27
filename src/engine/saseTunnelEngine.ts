@@ -96,11 +96,14 @@ export function createInitialSaseState(): SaseTunnelState {
 let saseEdgeApiAvailable: boolean | null = null;
 
 async function checkEdgeApiAvailable(): Promise<boolean> {
-  if (typeof window === 'undefined') return false;
+  const win = (
+    globalThis as { window?: { location?: { hostname?: string; port?: string } } }
+  ).window;
+  if (!win) return false;
   if (saseEdgeApiAvailable !== null) return saseEdgeApiAvailable;
   if (
-    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
-    (window.location.port === '5180' || window.location.port === '4180')
+    (win.location?.hostname === 'localhost' || win.location?.hostname === '127.0.0.1') &&
+    (win.location?.port === '5180' || win.location?.port === '4180')
   ) {
     saseEdgeApiAvailable = false;
     return false;
