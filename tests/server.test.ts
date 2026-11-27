@@ -363,4 +363,74 @@ describe('Lab 5 (sase-tunnel) Cloud Run Adapter — Red-Team & Security Invarian
     assert.equal(state.dns_queries_run, 2);
     assert.equal(state.dns_queries_blocked, 1);
   });
+
+  it('rejects oversized (>64 KB) JSON bodies with 413 PAYLOAD_TOO_LARGE', async () => {
+    const app = createCloudRunApp({
+      env: {
+        ENVIRONMENT: 'development',
+        LAB_SLUG: 'sase-tunnel'
+      },
+      kv: new MemoryKvAdapter({ labSlug: 'sase-tunnel' })
+    });
+
+    const oversizedBody = JSON.stringify({
+      target_app: 'internal-erp',
+      padding: 'x'.repeat(65 * 1024)
+    });
+
+    const accessRes = await app.request('http://127.0.0.1:8080/api/sase-tunnel/evaluate-access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: oversizedBody
+    });
+    assert.equal(accessRes.status, 413);
+    const accessJson = (await accessRes.json()) as { error: string; message: string };
+    assert.equal(accessJson.error, 'PAYLOAD_TOO_LARGE');
+
+    const dnsRes = await app.request('http://127.0.0.1:8080/api/sase-tunnel/dns-resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: oversizedBody
+    });
+    assert.equal(dnsRes.status, 413);
+    const dnsJson = (await dnsRes.json()) as { error: string; message: string };
+    assert.equal(dnsJson.error, 'PAYLOAD_TOO_LARGE');
+  });
+
+  it('fails closed with 400 on malformed JSON or invalid DNS domain preset', async () => {
+    const app = createCloudRunApp({
+      env: {
+        ENVIRONMENT: 'development',
+        LAB_SLUG: 'sase-tunnel'
+      },
+      kv: new MemoryKvAdapter({ labSlug: 'sase-tunnel' })
+    });
+
+    const badAccessRes = await app.request('http://127.0.0.1:8080/api/sase-tunnel/evaluate-access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{invalid-json'
+    });
+    assert.equal(badAccessRes.status, 400);
+    const badAccessJson = (await badAccessRes.json()) as { error: string };
+    assert.equal(badAccessJson.error, 'INVALID_JSON');
+
+    const badDnsJsonRes = await app.request('http://127.0.0.1:8080/api/sase-tunnel/dns-resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{invalid-json'
+    });
+    assert.equal(badDnsJsonRes.status, 400);
+    const badDnsJson = (await badDnsJsonRes.json()) as { error: string };
+    assert.equal(badDnsJson.error, 'INVALID_JSON');
+
+    const missingDomainRes = await app.request('http://127.0.0.1:8080/api/sase-tunnel/dns-resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    assert.equal(missingDomainRes.status, 400);
+    const missingDomainJson = (await missingDomainRes.json()) as { error: string };
+    assert.equal(missingDomainJson.error, 'INVALID_DOMAIN_PRESET');
+  });
 });

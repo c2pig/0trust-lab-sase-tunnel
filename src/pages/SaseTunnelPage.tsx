@@ -22,6 +22,11 @@ import {
   exportSasePostureReport,
   resolveDnsWithEdgeFallback
 } from '../engine/saseTunnelEngine';
+import {
+  buildSaseSeats,
+  getGlobalStatusLabel,
+  isAllPoliciesHardened
+} from '../engine/saseTunnelSelectors';
 import { RoleSeatItem, RoleSwitcherBar } from '../components/RoleSwitcherBar';
 import { XRayDecodedProofSection, XRayTelemetryDrawer } from '../components/XRayTelemetryDrawer';
 import { ObservabilitySpan } from '../types';
@@ -236,61 +241,13 @@ export function SaseTunnelPage({ onBack }: SaseTunnelPageProps): React.ReactElem
     URL.revokeObjectURL(url);
   };
 
-  const allAccessProtected =
-    state.accessPolicy.requireWarp &&
-    state.accessPolicy.requireDiskEncryption &&
-    state.accessPolicy.requireMinOs;
-  const allDnsProtected =
-    state.dnsPolicy.blockC2 &&
-    state.dnsPolicy.blockMalware &&
-    state.dnsPolicy.blockShadowAi;
-  const allPoliciesHardened = allAccessProtected && allDnsProtected;
+  const allPoliciesHardened = isAllPoliciesHardened(state);
+  const globalStatusLabel = getGlobalStatusLabel(state);
 
-  const globalStatusLabel = allPoliciesHardened
-    ? state.lastAccessResult?.status === 'ACCESS_GRANTED'
-      ? 'Zero-Trust Verified'
-      : 'Policies Hardened'
-    : 'Policy Gaps Open';
-
-  const seats: RoleSeatItem<SaseSeatId>[] = useMemo(() => {
-    const riskyDnsAllowed = state.dnsHistory.some(
-      (d) =>
-        d.status === 'ALLOWED' &&
-        (d.category === 'SHADOW_AI_GENAI' ||
-          d.category === 'COMMAND_AND_CONTROL' ||
-          d.category === 'MALWARE')
-    );
-
-    const staffNeedsVerify =
-      allPoliciesHardened && state.lastAccessResult?.status !== 'ACCESS_GRANTED';
-
-    return [
-      {
-        id: 'remote-employee',
-        name: 'Samira Al-Mansoor',
-        roleLabel: 'Remote Staff',
-        appLabel: 'Corporate Browser & Internal App Portal',
-        avatarInitials: 'SA',
-        badge: staffNeedsVerify
-          ? { text: 'Verify Access', tone: 'blue', pulse: true }
-          : null
-      },
-      {
-        id: 'net-admin',
-        name: 'Carlos Mendez',
-        roleLabel: 'Network Security',
-        appLabel: 'Access & Tunnel Policy Console',
-        avatarInitials: 'CM',
-        badge: !allPoliciesHardened
-          ? {
-              text: riskyDnsAllowed ? 'Egress Alert' : 'Policy Gaps',
-              tone: riskyDnsAllowed ? 'crimson' : 'amber',
-              pulse: true
-            }
-          : null
-      }
-    ];
-  }, [allPoliciesHardened, state.dnsHistory, state.lastAccessResult]);
+  const seats: RoleSeatItem<SaseSeatId>[] = useMemo(
+    () => buildSaseSeats(state),
+    [state]
+  );
 
   const decodedProofSections: XRayDecodedProofSection[] = useMemo(() => {
     const sections: XRayDecodedProofSection[] = [];
