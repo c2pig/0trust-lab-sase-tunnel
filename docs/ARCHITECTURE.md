@@ -43,3 +43,5 @@ Lab 5 models a Cloudflare One Zero-Trust SASE deployment that eliminates legacy 
   - **Layer 1 (`tests/server.test.ts`)**: Cloud Run adapter security invariants, `MemoryKvAdapter` / `FirestoreKvAdapter` TTL expiry, `413 PAYLOAD_TOO_LARGE` (>64 KB), and `400 INVALID_JSON` / `INVALID_DOMAIN_PRESET` fail-closed checks.
   - **Layer 2 (`tests/api.test.ts`)**: Edge function handlers (`evaluate-access.ts`, `dns-resolve.ts`, `health.ts`) with `MemoryKvAdapter` covering the Access posture matrix, Gateway DNS sinkhole policy toggles, negative payloads, and session isolation.
   - **Layer 3 (`tests/engine.test.ts`, `tests/selectors.test.ts`)**: Local WebCrypto fallback engine (`src/engine/saseTunnelEngine.ts`) and pure DOM-free UI selectors (`src/engine/saseTunnelSelectors.ts`) for `isAllPoliciesHardened`, `doesStaffNeedVerify`, `getGlobalStatusLabel`, and `buildSaseSeats`.
+
+- **Lease-Boundary Lifecycle (`LabLeaseGuard`)**: Synced `src/components/LabLeaseGuard.tsx` with `onLeaseEnded?: () => void` callback invoked on **End Lab** (`handleRelease()`) and lease expiry transitions.
