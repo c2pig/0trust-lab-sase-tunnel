@@ -99,7 +99,7 @@ variable "cf_tunnel_id" {
 variable "cf_api_token_secret_id" {
   type        = string
   default     = ""
-  description = "Optional GCP Secret Manager secret ID for CF_API_TOKEN (e.g. lab5-cf-api-token)."
+  description = "Optional GCP Secret Manager secret ID for CF_API_TOKEN (e.g. cf-api-token)."
 }
 
 variable "origin_direct_probe_url" {
