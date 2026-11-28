@@ -70,6 +70,9 @@ export interface AccessEvaluationResult {
   probed_socket?: string;
   public_ports_open?: number;
   outbound_only_tunnel?: boolean;
+  integration_mode?: 'sandbox' | 'live-doh' | 'live-cf-one';
+  tunnel_status?: string;
+  cf_ray?: string | null;
   storage: string;
   kv_ttl_seconds: number;
   timestamp: string;
@@ -85,6 +88,9 @@ export interface DnsResolveResult {
   resolved_ip: string;
   matched_policy: string;
   resolver_colo: string;
+  integration_mode?: 'sandbox' | 'live-doh' | 'live-cf-one';
+  doh_endpoint?: string;
+  cf_ray?: string | null;
   storage: string;
   kv_ttl_seconds: number;
   timestamp: string;

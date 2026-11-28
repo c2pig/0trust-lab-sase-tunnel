@@ -1,3 +1,5 @@
+import { resolveDnsViaDoh, type FetchLike, type SaseAdapterEnv } from '../lib/saseAdapter';
+
 export interface KVNamespace {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
@@ -24,7 +26,7 @@ export type DnsCategory =
   | 'COMMAND_AND_CONTROL'
   | 'MALWARE';
 
-export interface DnsResolveEnv {
+export interface DnsResolveEnv extends SaseAdapterEnv {
   STATE_KV?: KVNamespace;
   ENVIRONMENT?: string;
 }
@@ -125,6 +127,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 export async function onRequestPost(context: {
   request: Request;
   env: DnsResolveEnv;
+  fetchFn?: FetchLike;
 }): Promise<Response> {
   const rawText = await context.request.text();
   if (rawText.length > MAX_BODY_BYTES) {
@@ -184,6 +187,13 @@ export async function onRequestPost(context: {
     blockedReason = 'GATEWAY_DNS_BLOCK_SHADOW_AI';
   }
 
+  const dohLookup = await resolveDnsViaDoh({
+    domain,
+    useMalwareFilter: blockMalware,
+    env: context.env,
+    fetchFn: context.fetchFn
+  });
+
   let existing: SaseDnsKvRecord | null = null;
   if (context.env.STATE_KV) {
     try {
@@ -231,6 +241,9 @@ export async function onRequestPost(context: {
         resolved_ip: '0.0.0.0',
         matched_policy: blockedReason,
         resolver_colo: 'SIN',
+        integration_mode: dohLookup.integration_mode,
+        doh_endpoint: dohLookup.doh_endpoint,
+        cf_ray: dohLookup.cf_ray,
         storage: storageMode,
         kv_ttl_seconds: KV_TTL_SECONDS,
         timestamp,
@@ -240,6 +253,11 @@ export async function onRequestPost(context: {
     );
   }
 
+  const effectiveIp =
+    dohLookup.integration_mode === 'live-doh' && dohLookup.resolved_ip
+      ? dohLookup.resolved_ip
+      : entry.resolvedIp;
+
   return jsonResponse(
     {
       status: 'ALLOWED',
@@ -247,13 +265,16 @@ export async function onRequestPost(context: {
       domain,
       category: entry.category,
       dns_rcode: 'NOERROR',
-      resolved_ip: entry.resolvedIp,
+      resolved_ip: effectiveIp,
       matched_policy: 'GATEWAY_DNS_ALLOW_DEFAULT',
       resolver_colo: 'SIN',
+      integration_mode: dohLookup.integration_mode,
+      doh_endpoint: dohLookup.doh_endpoint,
+      cf_ray: dohLookup.cf_ray,
       storage: storageMode,
       kv_ttl_seconds: KV_TTL_SECONDS,
       timestamp,
-      message: `Gateway DNS resolved ${domain} -> ${entry.resolvedIp} (NOERROR).`
+      message: `Gateway DNS resolved ${domain} -> ${effectiveIp} (NOERROR${dohLookup.integration_mode === 'live-doh' && dohLookup.resolved_ip ? ' · live Cloudflare DoH' : ''}).`
     },
     200
   );

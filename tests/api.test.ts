@@ -19,7 +19,15 @@ describe('Lab 5 (sase-tunnel) Layer 2 API — Edge Functions with MemoryKvAdapte
   it('GET /api/sase-tunnel/health returns 200 ok', async () => {
     const res = await healthGet();
     assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { ok: true, service: '0trust-lab-sase-tunnel' });
+    assert.deepEqual(await res.json(), {
+      ok: true,
+      service: '0trust-lab-sase-tunnel',
+      integration_mode: 'auto',
+      capabilities: {
+        doh_live: true,
+        cf_one_configured: false
+      }
+    });
   });
 
   describe('evaluate-access posture matrix', () => {
@@ -256,4 +264,122 @@ describe('Lab 5 (sase-tunnel) Layer 2 API — Edge Functions with MemoryKvAdapte
       assert.equal(beta.dns_queries_blocked, 1);
     });
   });
+
+  describe('dual-mode third-party adapter (DoH & Cloudflare One)', () => {
+    it('resolves public domains via live Cloudflare DoH and surfaces cf_ray', async () => {
+      const kv = new MemoryKvAdapter({ labSlug: 'sase-tunnel' });
+      const mockFetch = async () =>
+        new Response(
+          JSON.stringify({
+            Status: 0,
+            Answer: [{ name: 'api.github.com.', type: 1, TTL: 60, data: '140.82.112.6' }]
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/dns-json',
+              'cf-ray': '8f1234567890-SIN'
+            }
+          }
+        );
+
+      const res = await dnsResolvePost({
+        request: postJson(
+          'https://lab.0trust.dev/api/sase-tunnel/dns-resolve',
+          { domain: 'api.github.com', block_malware: true },
+          'sess-live-doh'
+        ),
+        env: { STATE_KV: kv, SASE_INTEGRATION_MODE: 'live' },
+        fetchFn: mockFetch
+      });
+
+      assert.equal(res.status, 200);
+      const data = (await res.json()) as Record<string, unknown>;
+      assert.equal(data.integration_mode, 'live-doh');
+      assert.equal(data.resolved_ip, '140.82.112.6');
+      assert.equal(data.cf_ray, '8f1234567890-SIN');
+      assert.equal(data.doh_endpoint, 'https://security.cloudflare-dns.com/dns-query');
+    });
+
+    it('falls back cleanly to sandbox when live DoH fetch throws', async () => {
+      const kv = new MemoryKvAdapter({ labSlug: 'sase-tunnel' });
+      const failingFetch = async () => {
+        throw new Error('network timeout');
+      };
+
+      const res = await dnsResolvePost({
+        request: postJson(
+          'https://lab.0trust.dev/api/sase-tunnel/dns-resolve',
+          { domain: 'api.github.com' },
+          'sess-doh-fallback'
+        ),
+        env: { STATE_KV: kv, SASE_INTEGRATION_MODE: 'auto' },
+        fetchFn: failingFetch
+      });
+
+      assert.equal(res.status, 200);
+      const data = (await res.json()) as Record<string, unknown>;
+      assert.equal(data.integration_mode, 'sandbox');
+      assert.equal(data.resolved_ip, '140.82.114.6');
+    });
+
+    it('fetches live Cloudflare Tunnel status when Cloudflare One credentials are configured', async () => {
+      const kv = new MemoryKvAdapter({ labSlug: 'sase-tunnel' });
+      const mockCfApi = async () =>
+        new Response(
+          JSON.stringify({
+            success: true,
+            result: {
+              id: 'tun-uuid-123',
+              name: '0trust-lab5-sase-sandbox',
+              status: 'healthy',
+              connections: [{ colo_name: 'KUL', client_version: '2025.2.0' }]
+            }
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'cf-ray': '8f9999999999-KUL'
+            }
+          }
+        );
+
+      const res = await evaluateAccessPost({
+        request: postJson(
+          'https://lab.0trust.dev/api/sase-tunnel/evaluate-access',
+          {
+            target_app: 'internal-erp',
+            device_profile: 'managed-corp',
+            warp_connected: true,
+            disk_encrypted: true,
+            os_version_ok: true
+          },
+          'sess-live-cf1'
+        ),
+        env: {
+          STATE_KV: kv,
+          SASE_INTEGRATION_MODE: 'live',
+          CF_ACCOUNT_ID: 'acc-123',
+          CF_TUNNEL_ID: 'tun-uuid-123',
+          CF_API_TOKEN: 'tok-secret'
+        },
+        fetchFn: mockCfApi
+      });
+
+      assert.equal(res.status, 200);
+      const data = (await res.json()) as {
+        integration_mode: string;
+        tunnel_status: string;
+        cf_ray: string;
+        tunnel_connector: { connector_id: string; edge_colo: string };
+      };
+      assert.equal(data.integration_mode, 'live-cf-one');
+      assert.equal(data.tunnel_status, 'healthy');
+      assert.equal(data.cf_ray, '8f9999999999-KUL');
+      assert.equal(data.tunnel_connector.connector_id, '0trust-lab5-sase-sandbox');
+      assert.equal(data.tunnel_connector.edge_colo, 'KUL');
+    });
+  });
 });
+

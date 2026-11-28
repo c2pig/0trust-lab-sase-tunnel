@@ -1,3 +1,10 @@
+import {
+  fetchTunnelConnectorStatus,
+  probeDirectOrigin,
+  type FetchLike,
+  type SaseAdapterEnv
+} from '../lib/saseAdapter';
+
 export interface KVNamespace {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
@@ -13,7 +20,7 @@ function sanitizeSessionId(raw: string | null | undefined): string {
 export type TargetAppId = 'internal-erp' | 'finance-portal' | 'admin-ssh-bastion';
 export type DeviceProfileId = 'managed-corp' | 'unmanaged-byod' | 'stale-os';
 
-export interface EvaluateAccessEnv {
+export interface EvaluateAccessEnv extends SaseAdapterEnv {
   STATE_KV?: KVNamespace;
   ENVIRONMENT?: string;
 }
@@ -115,6 +122,7 @@ function encodeBase64Url(obj: Record<string, unknown>): string {
 export async function onRequestPost(context: {
   request: Request;
   env: EvaluateAccessEnv;
+  fetchFn?: FetchLike;
 }): Promise<Response> {
   const rawText = await context.request.text();
   if (rawText.length > MAX_BODY_BYTES) {
@@ -210,6 +218,10 @@ export async function onRequestPost(context: {
   };
 
   if (directOriginProbe) {
+    const probe = await probeDirectOrigin({
+      env: context.env,
+      fetchFn: context.fetchFn
+    });
     await persistRecord('BLOCKED_NO_PUBLIC_INGRESS');
     return jsonResponse(
       {
@@ -218,14 +230,14 @@ export async function onRequestPost(context: {
         error_code: 'ORIGIN_NO_PUBLIC_INGRESS',
         target_app: targetApp,
         target_hostname: APP_HOSTNAMES[targetApp],
-        probed_socket: '203.0.113.10:443 -> 10.24.0.14:8443',
+        probed_socket: probe.probed_socket,
         public_ports_open: 0,
         outbound_only_tunnel: true,
+        integration_mode: probe.integration_mode,
         storage: storageMode,
         kv_ttl_seconds: KV_TTL_SECONDS,
         timestamp,
-        message:
-          'Connection refused: Private origin 10.24.0.14 has zero public IPs and zero inbound ports. Only outbound-only cloudflared tunnel connections are accepted.'
+        message: probe.detail
       },
       403
     );
@@ -292,6 +304,11 @@ export async function onRequestPost(context: {
   };
   const syntheticJwt = `${encodeBase64Url(jwtHeader)}.${encodeBase64Url(jwtPayload)}.***REDACTED***`;
 
+  const tunnelConnector = await fetchTunnelConnectorStatus({
+    env: context.env,
+    fetchFn: context.fetchFn
+  });
+
   return jsonResponse(
     {
       status: 'ACCESS_GRANTED',
@@ -304,18 +321,21 @@ export async function onRequestPost(context: {
         header: jwtHeader,
         payload: jwtPayload
       },
+      integration_mode: tunnelConnector.integration_mode,
+      tunnel_status: tunnelConnector.tunnel_status,
+      cf_ray: tunnelConnector.cf_ray,
       tunnel_connector: {
-        connector_id: 'tun-cf-sase-sin-01',
-        edge_colo: 'SIN',
-        protocol: 'quic',
-        outbound_only: true,
-        public_ports_open: 0,
-        origin_private_ip: '10.24.0.14'
+        connector_id: tunnelConnector.connector_id,
+        edge_colo: tunnelConnector.edge_colo,
+        protocol: tunnelConnector.protocol,
+        outbound_only: tunnelConnector.outbound_only,
+        public_ports_open: tunnelConnector.public_ports_open,
+        origin_private_ip: tunnelConnector.origin_private_ip
       },
       storage: storageMode,
       kv_ttl_seconds: KV_TTL_SECONDS,
       timestamp,
-      message: `Cloudflare Access verified device posture and minted cf-access-jwt-assertion; traffic forwarded over outbound-only cloudflared tunnel to ${APP_HOSTNAMES[targetApp]}.`
+      message: `Cloudflare Access verified device posture and minted cf-access-jwt-assertion; traffic forwarded over outbound-only cloudflared tunnel (${tunnelConnector.connector_id}) to ${APP_HOSTNAMES[targetApp]}.`
     },
     200
   );
