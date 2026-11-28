@@ -65,3 +65,46 @@ variable "otlp_auth_header_secret_id" {
   default     = ""
   description = "Optional GCP Secret Manager secret ID for OTLP_AUTH_HEADER (e.g. grafana-otlp-auth-header)."
 }
+
+variable "sase_integration_mode" {
+  type        = string
+  default     = "auto"
+  description = "Lab 5 third-party integration mode: auto (live Cloudflare DoH + CF One when configured), live, or sandbox."
+}
+
+variable "enable_cloudflare_zero_trust" {
+  type        = bool
+  default     = false
+  description = "When true, provisions a dedicated sandbox cloudflared tunnel and Cloudflare Access application in Cloudflare Zero Trust."
+}
+
+variable "cf_access_team_domain" {
+  type        = string
+  default     = ""
+  description = "Existing Cloudflare Zero Trust team domain (e.g. <team>.cloudflareaccess.com)."
+}
+
+variable "cf_access_aud" {
+  type        = string
+  default     = ""
+  description = "Optional Cloudflare Access Application AUD tag (auto-wired when enable_cloudflare_zero_trust = true)."
+}
+
+variable "cf_tunnel_id" {
+  type        = string
+  default     = ""
+  description = "Optional existing cloudflared Tunnel ID (auto-wired when enable_cloudflare_zero_trust = true)."
+}
+
+variable "cf_api_token_secret_id" {
+  type        = string
+  default     = ""
+  description = "Optional GCP Secret Manager secret ID for CF_API_TOKEN (e.g. cf-api-token)."
+}
+
+variable "origin_direct_probe_url" {
+  type        = string
+  default     = ""
+  description = "Optional URL for live direct-to-origin ingress probe (Trap 5B)."
+}
+

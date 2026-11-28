@@ -36,10 +36,43 @@ module "cloud_run_lab" {
   deployer_service_account_email = var.deployer_service_account_email
 
   plain_env_vars = merge(
-    var.otlp_endpoint != "" ? { OTLP_ENDPOINT = var.otlp_endpoint } : {}
+    {
+      SASE_INTEGRATION_MODE = var.sase_integration_mode
+    },
+    var.otlp_endpoint != "" ? { OTLP_ENDPOINT = var.otlp_endpoint } : {},
+    var.cf_access_team_domain != "" ? { CF_ACCESS_TEAM_DOMAIN = var.cf_access_team_domain } : {},
+    var.enable_cloudflare_zero_trust || var.cf_tunnel_id != "" ? {
+      CF_ACCOUNT_ID = var.cloudflare_account_id
+      CF_TUNNEL_ID  = var.enable_cloudflare_zero_trust ? cloudflare_zero_trust_tunnel_cloudflared.sandbox[0].id : var.cf_tunnel_id
+    } : {},
+    var.enable_cloudflare_zero_trust || var.cf_access_aud != "" ? {
+      CF_ACCESS_AUD = var.enable_cloudflare_zero_trust ? cloudflare_zero_trust_access_application.sandbox_erp[0].aud : var.cf_access_aud
+    } : {},
+    var.origin_direct_probe_url != "" ? { ORIGIN_DIRECT_PROBE_URL = var.origin_direct_probe_url } : {}
   )
 
   secret_env_vars = merge(
-    var.otlp_auth_header_secret_id != "" ? { OTLP_AUTH_HEADER = var.otlp_auth_header_secret_id } : {}
+    var.otlp_auth_header_secret_id != "" ? { OTLP_AUTH_HEADER = var.otlp_auth_header_secret_id } : {},
+    var.cf_api_token_secret_id != "" ? { CF_API_TOKEN = var.cf_api_token_secret_id } : {}
   )
 }
+
+# Optional Phase 2: Dedicated sandbox cloudflared tunnel & Cloudflare Access app (gated by enable_cloudflare_zero_trust).
+resource "cloudflare_zero_trust_tunnel_cloudflared" "sandbox" {
+  count = var.enable_cloudflare_zero_trust ? 1 : 0
+
+  account_id = var.cloudflare_account_id
+  name       = "0trust-lab5-sase-sandbox"
+  config_src = "cloudflare"
+}
+
+resource "cloudflare_zero_trust_access_application" "sandbox_erp" {
+  count = var.enable_cloudflare_zero_trust ? 1 : 0
+
+  account_id       = var.cloudflare_account_id
+  name             = "0trust Lab 5 SASE Sandbox ERP"
+  domain           = "sase-sandbox.0trust.dev"
+  type             = "self_hosted"
+  session_duration = "1h"
+}
+

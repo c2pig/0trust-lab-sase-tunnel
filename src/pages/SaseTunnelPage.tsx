@@ -657,6 +657,7 @@ export function SaseTunnelPage({ onBack }: SaseTunnelPageProps): React.ReactElem
                                   ) : (
                                     <span className="badge badge-emerald">
                                       RESOLVED · {res.resolved_ip}
+                                      {res.integration_mode === 'live-doh' ? ' · Live DoH' : ''}
                                     </span>
                                   )
                                 ) : (

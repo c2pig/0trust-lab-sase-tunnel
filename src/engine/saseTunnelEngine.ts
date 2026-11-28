@@ -103,13 +103,16 @@ async function checkEdgeApiAvailable(): Promise<boolean> {
   if (saseEdgeApiAvailable !== null) return saseEdgeApiAvailable;
   if (
     (win.location?.hostname === 'localhost' || win.location?.hostname === '127.0.0.1') &&
-    (win.location?.port === '5180' || win.location?.port === '4180')
+    win.location?.port === '4180'
   ) {
     saseEdgeApiAvailable = false;
     return false;
   }
   try {
-    const res = await fetch('/api/sase-tunnel/health', { method: 'GET' });
+    const res = await fetch('/api/sase-tunnel/health', {
+      method: 'GET',
+      signal: AbortSignal.timeout(1500)
+    });
     const ct = res.headers.get('Content-Type') || '';
     saseEdgeApiAvailable = res.ok && ct.includes('application/json');
   } catch {

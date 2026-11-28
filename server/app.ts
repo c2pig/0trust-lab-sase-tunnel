@@ -9,9 +9,11 @@ import {
   type BaseCloudRunEnv
 } from './runtime';
 
+import type { SaseAdapterEnv } from '../functions/api/lib/saseAdapter';
+
 export { verifyRouterSecret };
 
-export interface CloudRunEnv extends BaseCloudRunEnv {}
+export interface CloudRunEnv extends BaseCloudRunEnv, SaseAdapterEnv {}
 
 export function createCloudRunApp(options?: {
   env?: CloudRunEnv;
